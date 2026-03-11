@@ -17,7 +17,11 @@ import {
   Lightbulb,
   Target,
   Filter,
-  RefreshCw
+  RefreshCw,
+  Download,
+  Copy,
+  Check,
+  Calendar
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -32,6 +36,7 @@ interface PainPoint {
   subreddit: string;
   postTitle: string;
   postUrl: string;
+  postDate: string;
   painPoint: string;
   userQuote: string;
 }
@@ -79,8 +84,7 @@ export default function App() {
   const [results, setResults] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [scanStep, setScanStep] = useState('');
-
-  const abortControllerRef = useRef<AbortController | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const runAnalysis = async (searchNiche: string) => {
     if (!searchNiche) return;
@@ -99,13 +103,16 @@ export default function App() {
         
         Analyze the search results and identify 5 distinct pain points. For each pain point, generate a Micro SaaS idea that solves it.
         
+        CRITICAL: Ensure all "postUrl" values are ABSOLUTE URLs starting with https://www.reddit.com.
+        
         Return the data in a structured JSON format with the following schema:
         {
           "painPoints": [
             {
               "subreddit": "string",
               "postTitle": "string",
-              "postUrl": "string",
+              "postUrl": "string (MUST BE ABSOLUTE URL)",
+              "postDate": "string (e.g. '2024-03-10' or '2 days ago')",
               "painPoint": "string (the core problem identified)",
               "userQuote": "string (a short relevant snippet from the post/comment)"
             }
@@ -143,10 +150,11 @@ export default function App() {
                     subreddit: { type: Type.STRING },
                     postTitle: { type: Type.STRING },
                     postUrl: { type: Type.STRING },
+                    postDate: { type: Type.STRING },
                     painPoint: { type: Type.STRING },
                     userQuote: { type: Type.STRING },
                   },
-                  required: ["subreddit", "postTitle", "postUrl", "painPoint", "userQuote"]
+                  required: ["subreddit", "postTitle", "postUrl", "postDate", "painPoint", "userQuote"]
                 }
               },
               saasIdeas: {
@@ -185,6 +193,24 @@ export default function App() {
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     runAnalysis(niche);
+  };
+
+  const exportToJson = () => {
+    if (!results) return;
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(results, null, 2));
+    const downloadAnchorNode = document.createElement('a');
+    downloadAnchorNode.setAttribute("href", dataStr);
+    downloadAnchorNode.setAttribute("download", `reddit_ideas_${niche.replace(/\s+/g, '_')}.json`);
+    document.body.appendChild(downloadAnchorNode);
+    downloadAnchorNode.click();
+    downloadAnchorNode.remove();
+  };
+
+  const copyToClipboard = (text: string, id: string) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 2000);
+    });
   };
 
   return (
@@ -278,98 +304,129 @@ export default function App() {
         </section>
 
         {results && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            {/* Pain Points Column */}
-            <div className="space-y-6">
-              <h2 className="text-xl font-bold uppercase tracking-tighter flex items-center gap-2 border-b border-[#141414] pb-2">
-                <MessageSquare size={20} />
-                Reddit Pain Points
-              </h2>
-              <div className="space-y-4">
-                {results.painPoints.map((pp, idx) => (
-                  <div key={idx} className="bg-white border border-[#141414] p-5 group hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">
-                    <div className="flex justify-between items-start mb-3">
-                      <span className="font-mono text-[10px] uppercase px-2 py-0.5 border border-current opacity-60">
-                        {pp.subreddit}
-                      </span>
-                      <a 
-                        href={pp.postUrl} 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        className="opacity-40 hover:opacity-100 transition-opacity"
-                      >
-                        <ExternalLink size={14} />
-                      </a>
-                    </div>
-                    <h3 className="font-bold text-lg leading-tight mb-2">{pp.postTitle}</h3>
-                    <p className="font-serif italic text-sm opacity-80 mb-4">"{pp.userQuote}"</p>
-                    <div className="pt-4 border-t border-current border-opacity-20">
-                      <p className="text-xs font-mono uppercase tracking-widest opacity-60 mb-1">Identified Problem:</p>
-                      <p className="text-sm font-medium">{pp.painPoint}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
+          <div className="space-y-6">
+            <div className="flex justify-end">
+              <button 
+                onClick={exportToJson}
+                className="flex items-center gap-2 px-4 py-2 border border-[#141414] font-mono text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
+              >
+                <Download size={14} />
+                Export to JSON
+              </button>
             </div>
-
-            {/* SaaS Ideas Column */}
-            <div className="space-y-6">
-              <h2 className="text-xl font-bold uppercase tracking-tighter flex items-center gap-2 border-b border-[#141414] pb-2">
-                <Lightbulb size={20} />
-                Micro SaaS Solutions
-              </h2>
-              <div className="space-y-4">
-                {results.saasIdeas.map((idea, idx) => (
-                  <div key={idx} className="bg-white border border-[#141414] p-5 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
-                    <div className="flex justify-between items-start mb-4">
-                      <div>
-                        <h3 className="text-xl font-bold tracking-tight">{idea.title}</h3>
-                        <p className="text-sm opacity-70 font-serif italic">{idea.description}</p>
+            
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              {/* Pain Points Column */}
+              <div className="space-y-6">
+                <h2 className="text-xl font-bold uppercase tracking-tighter flex items-center gap-2 border-b border-[#141414] pb-2">
+                  <MessageSquare size={20} />
+                  Reddit Pain Points
+                </h2>
+                <div className="space-y-4">
+                  {results.painPoints.map((pp, idx) => (
+                    <div key={idx} className="bg-white border border-[#141414] p-5 group hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">
+                      <div className="flex justify-between items-start mb-3">
+                        <div className="flex flex-wrap gap-2">
+                          <span className="font-mono text-[10px] uppercase px-2 py-0.5 border border-current opacity-60">
+                            {pp.subreddit}
+                          </span>
+                          <span className="font-mono text-[10px] uppercase px-2 py-0.5 border border-current opacity-60 flex items-center gap-1">
+                            <Calendar size={10} />
+                            {pp.postDate}
+                          </span>
+                        </div>
+                        <a 
+                          href={pp.postUrl.startsWith('http') ? pp.postUrl : `https://www.reddit.com${pp.postUrl.startsWith('/') ? '' : '/'}${pp.postUrl}`} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="opacity-40 hover:opacity-100 transition-opacity"
+                        >
+                          <ExternalLink size={14} />
+                        </a>
                       </div>
-                      <div className={cn(
-                        "px-2 py-1 text-[10px] font-mono uppercase border",
-                        idea.complexity === 'Low' ? "border-green-500 text-green-600" :
-                        idea.complexity === 'Medium' ? "border-yellow-500 text-yellow-600" :
-                        "border-red-500 text-red-600"
-                      )}>
-                        {idea.complexity} Complexity
+                      <h3 className="font-bold text-lg leading-tight mb-2">{pp.postTitle}</h3>
+                      <p className="font-serif italic text-sm opacity-80 mb-4">"{pp.userQuote}"</p>
+                      <div className="pt-4 border-t border-current border-opacity-20">
+                        <p className="text-xs font-mono uppercase tracking-widest opacity-60 mb-1">Identified Problem:</p>
+                        <p className="text-sm font-medium">{pp.painPoint}</p>
                       </div>
                     </div>
+                  ))}
+                </div>
+              </div>
 
-                    <div className="space-y-4">
-                      <div className="grid grid-cols-2 gap-4 text-xs font-mono">
-                        <div>
-                          <p className="uppercase opacity-50 mb-1">Target Audience</p>
-                          <p className="font-bold">{idea.targetAudience}</p>
+              {/* SaaS Ideas Column */}
+              <div className="space-y-6">
+                <h2 className="text-xl font-bold uppercase tracking-tighter flex items-center gap-2 border-b border-[#141414] pb-2">
+                  <Lightbulb size={20} />
+                  Micro SaaS Solutions
+                </h2>
+                <div className="space-y-4">
+                  {results.saasIdeas.map((idea, idx) => {
+                    const ideaId = `idea-${idx}`;
+                    const ideaText = `${idea.title}\n${idea.description}\n\nTarget: ${idea.targetAudience}\nMonetization: ${idea.monetization}\n\nFeatures:\n${idea.potentialFeatures.map(f => `- ${f}`).join('\n')}`;
+                    
+                    return (
+                      <div key={idx} className="bg-white border border-[#141414] p-5 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] relative group">
+                        <button 
+                          onClick={() => copyToClipboard(ideaText, ideaId)}
+                          className="absolute top-4 right-4 p-2 border border-[#141414] opacity-0 group-hover:opacity-100 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                          title="Copy to clipboard"
+                        >
+                          {copiedId === ideaId ? <Check size={14} /> : <Copy size={14} />}
+                        </button>
+                        
+                        <div className="flex justify-between items-start mb-4 pr-10">
+                          <div>
+                            <h3 className="text-xl font-bold tracking-tight">{idea.title}</h3>
+                            <p className="text-sm opacity-70 font-serif italic">{idea.description}</p>
+                          </div>
+                          <div className={cn(
+                            "px-2 py-1 text-[10px] font-mono uppercase border shrink-0",
+                            idea.complexity === 'Low' ? "border-green-500 text-green-600" :
+                            idea.complexity === 'Medium' ? "border-yellow-500 text-yellow-600" :
+                            "border-red-500 text-red-600"
+                          )}>
+                            {idea.complexity}
+                          </div>
                         </div>
-                        <div>
-                          <p className="uppercase opacity-50 mb-1">Monetization</p>
-                          <p className="font-bold">{idea.monetization}</p>
+
+                        <div className="space-y-4">
+                          <div className="grid grid-cols-2 gap-4 text-xs font-mono">
+                            <div>
+                              <p className="uppercase opacity-50 mb-1">Target Audience</p>
+                              <p className="font-bold">{idea.targetAudience}</p>
+                            </div>
+                            <div>
+                              <p className="uppercase opacity-50 mb-1">Monetization</p>
+                              <p className="font-bold">{idea.monetization}</p>
+                            </div>
+                          </div>
+
+                          <div>
+                            <p className="text-[10px] font-mono uppercase opacity-50 mb-2">Key Features</p>
+                            <ul className="space-y-1">
+                              {idea.potentialFeatures.map((f, fIdx) => (
+                                <li key={fIdx} className="text-sm flex items-center gap-2">
+                                  <ChevronRight size={12} className="opacity-40" />
+                                  {f}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+
+                          <div className="pt-4 border-t border-[#141414]/10">
+                            <p className="text-[10px] font-mono uppercase opacity-50 mb-1 flex items-center gap-1">
+                              <TrendingUp size={10} />
+                              Solving Pain Point:
+                            </p>
+                            <p className="text-xs italic opacity-80">{idea.sourcePainPoint}</p>
+                          </div>
                         </div>
                       </div>
-
-                      <div>
-                        <p className="text-[10px] font-mono uppercase opacity-50 mb-2">Key Features</p>
-                        <ul className="space-y-1">
-                          {idea.potentialFeatures.map((f, fIdx) => (
-                            <li key={fIdx} className="text-sm flex items-center gap-2">
-                              <ChevronRight size={12} className="opacity-40" />
-                              {f}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-
-                      <div className="pt-4 border-t border-[#141414]/10">
-                        <p className="text-[10px] font-mono uppercase opacity-50 mb-1 flex items-center gap-1">
-                          <TrendingUp size={10} />
-                          Solving Pain Point:
-                        </p>
-                        <p className="text-xs italic opacity-80">{idea.sourcePainPoint}</p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+                    );
+                  })}
+                </div>
               </div>
             </div>
           </div>
