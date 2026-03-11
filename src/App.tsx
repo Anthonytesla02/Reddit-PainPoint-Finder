@@ -21,7 +21,9 @@ import {
   Download,
   Copy,
   Check,
-  Calendar
+  Calendar,
+  Globe,
+  Layout
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -32,8 +34,11 @@ function cn(...inputs: ClassValue[]) {
 }
 
 // --- Types ---
+type Platform = 'Reddit' | 'Quora';
+
 interface PainPoint {
-  subreddit: string;
+  platform: Platform;
+  source: string; // subreddit for reddit, space/topic for quora
   postTitle: string;
   postUrl: string;
   postDate: string;
@@ -49,6 +54,7 @@ interface SaasIdea {
   complexity: 'Low' | 'Medium' | 'High';
   monetization: string;
   sourcePainPoint: string;
+  platform: Platform;
 }
 
 interface AnalysisResult {
@@ -80,36 +86,59 @@ const SUBREDDITS = [
 
 export default function App() {
   const [niche, setNiche] = useState('');
+  const [selectedPlatforms, setSelectedPlatforms] = useState<Platform[]>(['Reddit']);
   const [isScanning, setIsScanning] = useState(false);
   const [results, setResults] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [scanStep, setScanStep] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
+  const togglePlatform = (platform: Platform) => {
+    setSelectedPlatforms(prev => 
+      prev.includes(platform) 
+        ? prev.filter(p => p !== platform) 
+        : [...prev, platform]
+    );
+  };
+
   const runAnalysis = async (searchNiche: string) => {
-    if (!searchNiche) return;
+    if (!searchNiche || selectedPlatforms.length === 0) return;
     
     setIsScanning(true);
     setError(null);
     setResults(null);
-    setScanStep('Searching Reddit for pain points...');
+    setScanStep(`Searching ${selectedPlatforms.join(' & ')} for pain points...`);
 
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
       const model = "gemini-3-flash-preview";
 
+      const platformInstructions = [];
+      if (selectedPlatforms.includes('Reddit')) {
+        platformInstructions.push(`Search Reddit (subreddits like ${SUBREDDITS.join(', ')}) for real problems, frustrations, and "wish I had a tool for" posts.`);
+      }
+      if (selectedPlatforms.includes('Quora')) {
+        platformInstructions.push(`Search Quora for questions and discussions where people are asking for solutions, complaining about existing tools, or describing manual workflows that are painful.`);
+      }
+
       const prompt = `
-        Search Reddit (subreddits like ${SUBREDDITS.join(', ')}) for real problems, frustrations, and "wish I had a tool for" posts related to the niche: "${searchNiche}".
+        ${platformInstructions.join(' ')}
         
-        Analyze the search results and identify 5 distinct pain points. For each pain point, generate a Micro SaaS idea that solves it.
+        Focus on the niche: "${searchNiche}".
         
-        CRITICAL: Ensure all "postUrl" values are ABSOLUTE URLs starting with https://www.reddit.com.
+        Analyze the search results and identify 5 distinct pain points across the selected platforms. For each pain point, generate a Micro SaaS idea that solves it.
+        
+        CRITICAL: 
+        - Ensure all "postUrl" values are ABSOLUTE URLs.
+        - For Reddit, start with https://www.reddit.com.
+        - For Quora, start with https://www.quora.com.
         
         Return the data in a structured JSON format with the following schema:
         {
           "painPoints": [
             {
-              "subreddit": "string",
+              "platform": "Reddit | Quora",
+              "source": "string (subreddit name or quora topic/space)",
               "postTitle": "string",
               "postUrl": "string (MUST BE ABSOLUTE URL)",
               "postDate": "string (e.g. '2024-03-10' or '2 days ago')",
@@ -125,7 +154,8 @@ export default function App() {
               "potentialFeatures": ["string"],
               "complexity": "Low | Medium | High",
               "monetization": "string",
-              "sourcePainPoint": "string (matching the 'painPoint' from the list above)"
+              "sourcePainPoint": "string (matching the 'painPoint' from the list above)",
+              "platform": "Reddit | Quora"
             }
           ]
         }
@@ -147,14 +177,15 @@ export default function App() {
                 items: {
                   type: Type.OBJECT,
                   properties: {
-                    subreddit: { type: Type.STRING },
+                    platform: { type: Type.STRING, enum: ["Reddit", "Quora"] },
+                    source: { type: Type.STRING },
                     postTitle: { type: Type.STRING },
                     postUrl: { type: Type.STRING },
                     postDate: { type: Type.STRING },
                     painPoint: { type: Type.STRING },
                     userQuote: { type: Type.STRING },
                   },
-                  required: ["subreddit", "postTitle", "postUrl", "postDate", "painPoint", "userQuote"]
+                  required: ["platform", "source", "postTitle", "postUrl", "postDate", "painPoint", "userQuote"]
                 }
               },
               saasIdeas: {
@@ -169,8 +200,9 @@ export default function App() {
                     complexity: { type: Type.STRING, enum: ["Low", "Medium", "High"] },
                     monetization: { type: Type.STRING },
                     sourcePainPoint: { type: Type.STRING },
+                    platform: { type: Type.STRING, enum: ["Reddit", "Quora"] },
                   },
-                  required: ["title", "description", "targetAudience", "potentialFeatures", "complexity", "monetization", "sourcePainPoint"]
+                  required: ["title", "description", "targetAudience", "potentialFeatures", "complexity", "monetization", "sourcePainPoint", "platform"]
                 }
               }
             },
@@ -183,7 +215,7 @@ export default function App() {
       setResults(data);
     } catch (err: any) {
       console.error(err);
-      setError(err.message || "An error occurred while scanning Reddit. Please try again.");
+      setError(err.message || "An error occurred while scanning platforms. Please try again.");
     } finally {
       setIsScanning(false);
       setScanStep('');
@@ -200,7 +232,7 @@ export default function App() {
     const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(results, null, 2));
     const downloadAnchorNode = document.createElement('a');
     downloadAnchorNode.setAttribute("href", dataStr);
-    downloadAnchorNode.setAttribute("download", `reddit_ideas_${niche.replace(/\s+/g, '_')}.json`);
+    downloadAnchorNode.setAttribute("download", `painpoint_ideas_${niche.replace(/\s+/g, '_')}.json`);
     document.body.appendChild(downloadAnchorNode);
     downloadAnchorNode.click();
     downloadAnchorNode.remove();
@@ -220,10 +252,10 @@ export default function App() {
         <div>
           <h1 className="text-3xl font-bold tracking-tighter flex items-center gap-2">
             <Zap className="fill-current" size={28} />
-            REDDIT PAINPOINT AI
+            PAINPOINT AI
           </h1>
           <p className="font-serif italic text-sm opacity-60 mt-1 uppercase tracking-widest">
-            Micro SaaS Idea Generator • Powered by Gemini 3
+            Micro SaaS Idea Generator • Reddit & Quora
           </p>
         </div>
         <div className="flex items-center gap-3 text-xs font-mono">
@@ -236,25 +268,52 @@ export default function App() {
         {/* Search Section */}
         <section className="bg-white border border-[#141414] p-8 shadow-[8px_8px_0px_0px_rgba(20,20,20,1)]">
           <form onSubmit={handleSearch} className="space-y-6">
-            <div className="space-y-2">
-              <label className="font-serif italic text-sm uppercase tracking-wider opacity-60 flex items-center gap-2">
-                <Target size={14} />
-                Select or Enter a Niche
-              </label>
-              <div className="flex flex-wrap gap-2">
-                {SUGGESTED_NICHES.map((s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    onClick={() => setNiche(s)}
-                    className={cn(
-                      "px-3 py-1 text-xs font-mono border border-[#141414] transition-colors",
-                      niche === s ? "bg-[#141414] text-[#E4E3E0]" : "hover:bg-[#141414]/5"
-                    )}
-                  >
-                    {s}
-                  </button>
-                ))}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              <div className="space-y-4">
+                <label className="font-serif italic text-sm uppercase tracking-wider opacity-60 flex items-center gap-2">
+                  <Globe size={14} />
+                  1. Select Platforms
+                </label>
+                <div className="flex gap-4">
+                  {(['Reddit', 'Quora'] as Platform[]).map((p) => (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => togglePlatform(p)}
+                      className={cn(
+                        "flex-1 py-3 border-2 border-[#141414] font-mono text-xs uppercase transition-all flex items-center justify-center gap-2",
+                        selectedPlatforms.includes(p) 
+                          ? "bg-[#141414] text-[#E4E3E0] shadow-[4px_4px_0px_0px_rgba(0,0,0,0.2)]" 
+                          : "bg-transparent text-[#141414] opacity-40 hover:opacity-100"
+                      )}
+                    >
+                      {selectedPlatforms.includes(p) && <Check size={14} />}
+                      {p}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <label className="font-serif italic text-sm uppercase tracking-wider opacity-60 flex items-center gap-2">
+                  <Target size={14} />
+                  2. Select or Enter a Niche
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {SUGGESTED_NICHES.map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => setNiche(s)}
+                      className={cn(
+                        "px-3 py-1 text-xs font-mono border border-[#141414] transition-colors",
+                        niche === s ? "bg-[#141414] text-[#E4E3E0]" : "hover:bg-[#141414]/5"
+                      )}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -270,7 +329,7 @@ export default function App() {
                 />
               </div>
               <button
-                disabled={isScanning || !niche}
+                disabled={isScanning || !niche || selectedPlatforms.length === 0}
                 className="bg-[#141414] text-[#E4E3E0] px-8 py-4 font-bold uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#2a2a2a] transition-colors"
               >
                 {isScanning ? (
@@ -320,15 +379,21 @@ export default function App() {
               <div className="space-y-6">
                 <h2 className="text-xl font-bold uppercase tracking-tighter flex items-center gap-2 border-b border-[#141414] pb-2">
                   <MessageSquare size={20} />
-                  Reddit Pain Points
+                  Source Pain Points
                 </h2>
                 <div className="space-y-4">
                   {results.painPoints.map((pp, idx) => (
                     <div key={idx} className="bg-white border border-[#141414] p-5 group hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">
                       <div className="flex justify-between items-start mb-3">
                         <div className="flex flex-wrap gap-2">
+                          <span className={cn(
+                            "font-mono text-[10px] uppercase px-2 py-0.5 border border-current",
+                            pp.platform === 'Reddit' ? "text-orange-600" : "text-red-700"
+                          )}>
+                            {pp.platform}
+                          </span>
                           <span className="font-mono text-[10px] uppercase px-2 py-0.5 border border-current opacity-60">
-                            {pp.subreddit}
+                            {pp.source}
                           </span>
                           <span className="font-mono text-[10px] uppercase px-2 py-0.5 border border-current opacity-60 flex items-center gap-1">
                             <Calendar size={10} />
@@ -336,7 +401,7 @@ export default function App() {
                           </span>
                         </div>
                         <a 
-                          href={pp.postUrl.startsWith('http') ? pp.postUrl : `https://www.reddit.com${pp.postUrl.startsWith('/') ? '' : '/'}${pp.postUrl}`} 
+                          href={pp.postUrl} 
                           target="_blank" 
                           rel="noopener noreferrer"
                           className="opacity-40 hover:opacity-100 transition-opacity"
@@ -364,7 +429,7 @@ export default function App() {
                 <div className="space-y-4">
                   {results.saasIdeas.map((idea, idx) => {
                     const ideaId = `idea-${idx}`;
-                    const ideaText = `${idea.title}\n${idea.description}\n\nTarget: ${idea.targetAudience}\nMonetization: ${idea.monetization}\n\nFeatures:\n${idea.potentialFeatures.map(f => `- ${f}`).join('\n')}`;
+                    const ideaText = `${idea.title}\n${idea.description}\n\nPlatform: ${idea.platform}\nTarget: ${idea.targetAudience}\nMonetization: ${idea.monetization}\n\nFeatures:\n${idea.potentialFeatures.map(f => `- ${f}`).join('\n')}`;
                     
                     return (
                       <div key={idx} className="bg-white border border-[#141414] p-5 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] relative group">
@@ -378,7 +443,15 @@ export default function App() {
                         
                         <div className="flex justify-between items-start mb-4 pr-10">
                           <div>
-                            <h3 className="text-xl font-bold tracking-tight">{idea.title}</h3>
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className={cn(
+                                "text-[9px] font-mono uppercase px-1 border",
+                                idea.platform === 'Reddit' ? "border-orange-500 text-orange-600" : "border-red-500 text-red-600"
+                              )}>
+                                {idea.platform}
+                              </span>
+                              <h3 className="text-xl font-bold tracking-tight">{idea.title}</h3>
+                            </div>
                             <p className="text-sm opacity-70 font-serif italic">{idea.description}</p>
                           </div>
                           <div className={cn(
@@ -439,7 +512,7 @@ export default function App() {
             </div>
             <h2 className="text-2xl font-bold uppercase tracking-tighter opacity-40">Ready to scan the front page of the internet?</h2>
             <p className="font-serif italic opacity-40 max-w-md mx-auto">
-              Enter a niche above to find real problems people are discussing on Reddit and turn them into profitable Micro SaaS ideas.
+              Select your platforms and enter a niche above to find real problems people are discussing on Reddit and Quora.
             </p>
           </div>
         )}
@@ -453,8 +526,8 @@ export default function App() {
             <p className="font-bold text-sm">Google AI Studio • Gemini 3 • React</p>
           </div>
           <div className="flex gap-8 font-mono text-[10px] uppercase tracking-widest opacity-40">
-            <span>No Reddit API Required</span>
-            <span>Real-time Search</span>
+            <span>No API Keys Required</span>
+            <span>Reddit & Quora</span>
             <span>AI Powered Analysis</span>
           </div>
           <p className="text-[10px] font-mono opacity-40">© 2026 PAINPOINT AI</p>
