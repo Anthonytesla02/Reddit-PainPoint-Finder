@@ -23,7 +23,9 @@ import {
   Check,
   Calendar,
   Globe,
-  Layout
+  Layout,
+  X,
+  Plus
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -85,8 +87,10 @@ const SUBREDDITS = [
 ];
 
 export default function App() {
-  const [niche, setNiche] = useState('');
+  const [selectedNiches, setSelectedNiches] = useState<string[]>([]);
+  const [manualInput, setManualInput] = useState('');
   const [selectedPlatforms, setSelectedPlatforms] = useState<Platform[]>(['Reddit']);
+  const [isDeepSearch, setIsDeepSearch] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [results, setResults] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -101,13 +105,33 @@ export default function App() {
     );
   };
 
-  const runAnalysis = async (searchNiche: string) => {
-    if (!searchNiche || selectedPlatforms.length === 0) return;
+  const toggleSuggestedNiche = (niche: string) => {
+    setSelectedNiches(prev => 
+      prev.includes(niche) 
+        ? prev.filter(n => n !== niche) 
+        : [...prev, niche]
+    );
+  };
+
+  const addManualNiche = () => {
+    const trimmed = manualInput.trim();
+    if (trimmed && !selectedNiches.includes(trimmed)) {
+      setSelectedNiches(prev => [...prev, trimmed]);
+      setManualInput('');
+    }
+  };
+
+  const removeNiche = (niche: string) => {
+    setSelectedNiches(prev => prev.filter(n => n !== niche));
+  };
+
+  const runAnalysis = async () => {
+    if (selectedNiches.length === 0 || selectedPlatforms.length === 0) return;
     
     setIsScanning(true);
     setError(null);
     setResults(null);
-    setScanStep(`Searching ${selectedPlatforms.join(' & ')} for pain points...`);
+    setScanStep(isDeepSearch ? "Initiating deep crawl across platforms..." : `Searching ${selectedPlatforms.join(' & ')} for pain points...`);
 
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
@@ -121,12 +145,14 @@ export default function App() {
         platformInstructions.push(`Search Quora for questions and discussions where people are asking for solutions, complaining about existing tools, or describing manual workflows that are painful.`);
       }
 
+      const count = isDeepSearch ? "12-15" : "5-8";
+
       const prompt = `
         ${platformInstructions.join(' ')}
         
-        Focus on the niche: "${searchNiche}".
+        Focus on the following niches: ${selectedNiches.map(n => `"${n}"`).join(', ')}.
         
-        Analyze the search results and identify 5 distinct pain points across the selected platforms. For each pain point, generate a Micro SaaS idea that solves it.
+        Analyze the search results and identify ${count} distinct pain points across the selected platforms and niches. For each pain point, generate a Micro SaaS idea that solves it.
         
         CRITICAL: 
         - Ensure all "postUrl" values are ABSOLUTE URLs.
@@ -161,7 +187,7 @@ export default function App() {
         }
       `;
 
-      setScanStep('Analyzing discussions and generating ideas...');
+      setScanStep(isDeepSearch ? 'Performing deep analysis of multiple threads...' : 'Analyzing discussions and generating ideas...');
       
       const response = await ai.models.generateContent({
         model: model,
@@ -224,7 +250,7 @@ export default function App() {
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    runAnalysis(niche);
+    runAnalysis();
   };
 
   const exportToJson = () => {
@@ -232,7 +258,7 @@ export default function App() {
     const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(results, null, 2));
     const downloadAnchorNode = document.createElement('a');
     downloadAnchorNode.setAttribute("href", dataStr);
-    downloadAnchorNode.setAttribute("download", `painpoint_ideas_${niche.replace(/\s+/g, '_')}.json`);
+    downloadAnchorNode.setAttribute("download", `painpoint_ideas_${selectedNiches.join('_').replace(/\s+/g, '_')}.json`);
     document.body.appendChild(downloadAnchorNode);
     downloadAnchorNode.click();
     downloadAnchorNode.remove();
@@ -292,22 +318,37 @@ export default function App() {
                     </button>
                   ))}
                 </div>
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsDeepSearch(!isDeepSearch)}
+                    className={cn(
+                      "w-full py-2 border border-[#141414] font-mono text-[10px] uppercase transition-all flex items-center justify-center gap-2",
+                      isDeepSearch 
+                        ? "bg-amber-100 text-amber-900 border-amber-900" 
+                        : "opacity-40 hover:opacity-100"
+                    )}
+                  >
+                    <TrendingUp size={12} className={isDeepSearch ? "animate-pulse" : ""} />
+                    {isDeepSearch ? "Deep Search Enabled (10+ Results)" : "Enable Deep Search"}
+                  </button>
+                </div>
               </div>
 
               <div className="space-y-4">
                 <label className="font-serif italic text-sm uppercase tracking-wider opacity-60 flex items-center gap-2">
                   <Target size={14} />
-                  2. Select or Enter a Niche
+                  2. Select or Enter Niches
                 </label>
                 <div className="flex flex-wrap gap-2">
                   {SUGGESTED_NICHES.map((s) => (
                     <button
                       key={s}
                       type="button"
-                      onClick={() => setNiche(s)}
+                      onClick={() => toggleSuggestedNiche(s)}
                       className={cn(
                         "px-3 py-1 text-xs font-mono border border-[#141414] transition-colors",
-                        niche === s ? "bg-[#141414] text-[#E4E3E0]" : "hover:bg-[#141414]/5"
+                        selectedNiches.includes(s) ? "bg-[#141414] text-[#E4E3E0]" : "hover:bg-[#141414]/5"
                       )}
                     >
                       {s}
@@ -317,33 +358,63 @@ export default function App() {
               </div>
             </div>
 
-            <div className="flex flex-col md:flex-row gap-4">
-              <div className="relative flex-1">
-                <Search className="absolute left-4 top-1/2 -translate-y-1/2 opacity-40" size={20} />
-                <input
-                  type="text"
-                  value={niche}
-                  onChange={(e) => setNiche(e.target.value)}
-                  placeholder="e.g. 'Shopify App Store' or 'Real Estate Agents'"
-                  className="w-full bg-transparent border-2 border-[#141414] py-4 pl-12 pr-4 font-mono focus:outline-none focus:ring-0 focus:border-[#141414]"
-                />
+            <div className="space-y-4">
+              <div className="flex flex-col md:flex-row gap-4">
+                <div className="relative flex-1">
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 opacity-40" size={20} />
+                  <input
+                    type="text"
+                    value={manualInput}
+                    onChange={(e) => setManualInput(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addManualNiche())}
+                    placeholder="Type a custom niche and press Enter..."
+                    className="w-full bg-transparent border-2 border-[#141414] py-4 pl-12 pr-4 font-mono focus:outline-none focus:ring-0 focus:border-[#141414]"
+                  />
+                  <button
+                    type="button"
+                    onClick={addManualNiche}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-2 hover:bg-[#141414]/5 rounded transition-colors"
+                  >
+                    <Plus size={20} />
+                  </button>
+                </div>
+                <button
+                  disabled={isScanning || selectedNiches.length === 0 || selectedPlatforms.length === 0}
+                  className="bg-[#141414] text-[#E4E3E0] px-8 py-4 font-bold uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#2a2a2a] transition-colors"
+                >
+                  {isScanning ? (
+                    <>
+                      <Loader2 className="animate-spin" size={20} />
+                      Scanning...
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw size={20} className={isDeepSearch ? "text-amber-500" : ""} />
+                      {isDeepSearch ? "Run Deep Search" : "Generate Ideas"}
+                    </>
+                  )}
+                </button>
               </div>
-              <button
-                disabled={isScanning || !niche || selectedPlatforms.length === 0}
-                className="bg-[#141414] text-[#E4E3E0] px-8 py-4 font-bold uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#2a2a2a] transition-colors"
-              >
-                {isScanning ? (
-                  <>
-                    <Loader2 className="animate-spin" size={20} />
-                    Scanning...
-                  </>
-                ) : (
-                  <>
-                    <RefreshCw size={20} />
-                    Generate Ideas
-                  </>
-                )}
-              </button>
+
+              {selectedNiches.length > 0 && (
+                <div className="flex flex-wrap gap-2 pt-2">
+                  {selectedNiches.map((n) => (
+                    <div 
+                      key={n} 
+                      className="flex items-center gap-2 px-3 py-1 bg-[#141414] text-[#E4E3E0] text-xs font-mono uppercase"
+                    >
+                      {n}
+                      <button 
+                        type="button" 
+                        onClick={() => removeNiche(n)}
+                        className="hover:text-red-400 transition-colors"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </form>
 
@@ -512,7 +583,7 @@ export default function App() {
             </div>
             <h2 className="text-2xl font-bold uppercase tracking-tighter opacity-40">Ready to scan the front page of the internet?</h2>
             <p className="font-serif italic opacity-40 max-w-md mx-auto">
-              Select your platforms and enter a niche above to find real problems people are discussing on Reddit and Quora.
+              Select your platforms and enter one or more niches above to find real problems people are discussing on Reddit and Quora.
             </p>
           </div>
         )}
